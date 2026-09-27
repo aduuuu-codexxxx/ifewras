@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FloodCast AI - Flood Early Warning Control Centre</title>
+    <meta name="description" content="FloodCast AI: AI flood forecasting, red-zone alerts, multilingual SMS and AI voice-call warnings for Assam.">
+    <meta name="application-name" content="FloodCast AI">
+    <meta name="theme-color" content="#0f172a">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%232563eb'/><path d='M5 20c3 0 3-2 6-2s3 2 6 2 3-2 6-2 3 2 4 2v4c-1 0-1-2-4-2s-3 2-6 2-3-2-6-2-3 2-6 2z' fill='white'/><path d='M16 5l6 10H10z' fill='%23fca5a5'/></svg>">
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = { darkMode: 'class' }
+    </script>
+    <!-- Leaflet CSS & JS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- Chart.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+    <!-- Custom Styles -->
+    <link rel="stylesheet" href="/static/css/custom.css">
+</head>
+<body class="bg-slate-950 text-slate-100 font-sans min-h-screen flex flex-col antialiased overflow-x-hidden">
+
+    <!-- HEADER: brand + page navigation -->
+    <header class="bg-slate-900 border-b border-slate-800 px-4 py-2 flex flex-wrap items-center justify-between gap-3 sticky top-0 z-[1100]">
+        <a href="#/dashboard" class="flex items-center gap-3">
+            <div class="w-9 h-9 rounded-lg bg-blue-600 flex items-center justify-center text-white shadow-lg shadow-blue-500/30">
+                <i class="fa-solid fa-house-flood-water text-lg"></i>
+            </div>
+            <div>
+                <h1 class="text-lg font-bold tracking-tight text-white leading-tight">FloodCast AI</h1>
+                <p class="text-[11px] text-slate-400 leading-tight">Flood early warning control centre · ASDMA / SDRF Assam</p>
+            </div>
+        </a>
+
+        <nav class="flex items-center gap-1 text-xs overflow-x-auto" id="main-nav">
+            <a href="#/dashboard" class="nav-link" data-page="dashboard"><i class="fa-solid fa-gauge-high"></i><span>Dashboard</span></a>
+            <a href="#/map" class="nav-link" data-page="map"><i class="fa-solid fa-map-location-dot"></i><span>Map &amp; Zones</span><span id="nav-red-badge" class="nav-badge hidden">0</span></a>
+            <a href="#/forecast" class="nav-link" data-page="forecast"><i class="fa-solid fa-chart-line"></i><span>Forecast</span></a>
+            <a href="#/relief" class="nav-link" data-page="relief"><i class="fa-solid fa-truck-medical"></i><span>Relief</span></a>
+            <a href="#/alerts" class="nav-link" data-page="alerts"><i class="fa-solid fa-tower-broadcast"></i><span>Alerts</span></a>
+            <a href="#/settings" class="nav-link" data-page="settings"><i class="fa-solid fa-gear"></i><span>Settings</span></a>
+        </nav>
+    </header>
+
+    <!-- PLAYBACK BAR: runs the 72-hour dataset through the forecast pipeline -->
+    <div class="bg-slate-900/95 border-b border-slate-800 px-4 py-2 flex flex-wrap items-center gap-3 text-xs">
+        <div class="flex items-center gap-1 bg-slate-950 border border-slate-800 rounded-md p-0.5">
+            <button id="btn-step-prev" title="Back 1 hour" class="px-2.5 py-1 hover:bg-slate-800 text-slate-300 hover:text-white rounded"><i class="fa-solid fa-backward-step"></i></button>
+            <button id="btn-play-pause" title="Run the 72-hour dataset" class="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded flex items-center gap-1.5">
+                <i class="fa-solid fa-play" id="play-icon"></i><span id="play-text">Play</span>
+            </button>
+            <button id="btn-step-next" title="Forward 1 hour" class="px-2.5 py-1 hover:bg-slate-800 text-slate-300 hover:text-white rounded"><i class="fa-solid fa-forward-step"></i></button>
+            <button id="btn-reset" title="Reset to T+0h" class="px-2.5 py-1 hover:bg-slate-800 text-amber-400 rounded"><i class="fa-solid fa-rotate-left"></i></button>
+        </div>
+        <div class="flex items-center gap-2 flex-1 min-w-[220px]">
+            <span class="font-mono text-white font-bold w-14" id="hour-label">T+00h</span>
+            <input type="range" id="hour-slider" min="0" max="72" value="0" step="1" class="flex-1 accent-blue-500">
+            <span class="font-mono text-slate-500">72h</span>
+        </div>
+        <div class="text-slate-400 truncate max-w-md hidden lg:block">
+            <span class="text-amber-400 font-semibold" id="phase-badge">Phase</span>
+            <span id="phase-name" class="text-slate-300">Loading…</span>
+        </div>
+        <div class="text-[11px] text-slate-500 font-mono" id="compute-info">—</div>
+    </div>
+
+    <main class="flex-1 min-h-0 p-3">
+
+        <!-- ================= DASHBOARD ================= -->
+        <section class="page space-y-3" data-page="dashboard">
+            <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2 text-xs">
+                <div class="kpi"><i class="fa-solid fa-hourglass-half text-blue-400"></i><div><p>Lead time left</p><strong class="text-blue-400" id="kpi-lead-time">72 h</strong></div></div>
+                <div class="kpi"><i class="fa-solid fa-circle-radiation text-red-400"></i><div><p>Red zones</p><strong class="text-red-400" id="kpi-red-zones">0</strong></div></div>
+                <div class="kpi"><i class="fa-solid fa-water text-amber-400"></i><div><p>Gauges above danger</p><strong class="text-amber-400" id="kpi-danger-gauges">0</strong></div></div>
+                <div class="kpi"><i class="fa-solid fa-map text-cyan-400"></i><div><p>Flooded area</p><strong class="text-cyan-400" id="kpi-inundated-area">0 km²</strong></div></div>
+                <div class="kpi"><i class="fa-solid fa-people-roof text-rose-400"></i><div><p>P1 villages</p><strong class="text-rose-400" id="kpi-critical-villages">0</strong></div></div>
+                <div class="kpi"><i class="fa-solid fa-ship text-emerald-400"></i><div><p>Boats deployed</p><strong class="text-emerald-400" id="kpi-boats-deployed">0</strong></div></div>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-3">
+                <div class="card lg:col-span-2">
+                    <div class="flex items-center justify-between mb-2">
+                        <h3 class="card-title"><i class="fa-solid fa-chart-area text-blue-400"></i> Computed flood trend</h3>
+                        <span class="text-[11px] text-slate-500">Each point is computed live from the dataset when you press Play</span>
+                    </div>
+                    <div class="h-64"><canvas id="trend-chart"></canvas></div>
+                </div>
+                <div class="card">
+                    <h3 class="card-title mb-2"><i class="fa-solid fa-circle-radiation text-red-400"></i> Zone status</h3>
+                    <div id="dash-zone-list" class="space-y-1.5 text-xs"></div>
+                    <a href="#/map" class="mt-3 block text-center text-xs text-blue-400 hover:text-blue-300">Open map →</a>
+                </div>
+            </div>
+
+            <div class="card text-xs">
+                <div class="flex items-center justify-between gap-2 mb-1">
+                    <h3 class="card-title"><i class="fa-solid fa-circle-info text-amber-400"></i> <span id="dash-phase-title">Current phase</span></h3>
+                    <button id="btn-ai-brief" class="shrink-0 px-2.5 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-semibold"><i class="fa-solid fa-robot"></i> AI briefing</button>
+                </div>
+                <p class="text-slate-400" id="dash-phase-desc">—</p>
+            </div>
+        </section>
+
+        <!-- ================= MAP & ZONES ================= -->
+        <section class="page hidden" data-page="map">
+            <div class="grid grid-cols-1 lg:grid-cols-4 gap-3 h-[calc(100vh-150px)] min-h-[520px]">
+                <div class="lg:col-span-3 relative bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+                    <details class="absolute top-3 right-3 z-[1000] bg-slate-900/95 border border-slate-700 rounded-lg text-xs shadow-xl min-w-[170px]">
+                        <summary class="cursor-pointer px-3 py-2 font-semibold text-slate-300 flex items-center gap-2"><i class="fa-solid fa-layer-group text-blue-400"></i> Layers</summary>
+                        <div class="px-3 pb-2 flex flex-col gap-1.5">
+                            <select id="select-basemap" class="w-full bg-slate-950 border border-slate-700 text-slate-200 text-[11px] rounded px-1.5 py-1">
+                                <option value="esri_dark" selected>Dark (Esri)</option>
+                                <option value="osm_standard">Streets (OSM)</option>
+                                <option value="esri_satellite">Satellite (Esri)</option>
+                            </select>
+                            <label class="layer-toggle"><input type="checkbox" id="layer-zones" checked> Hazard zones</label>
+                            <label class="layer-toggle"><input type="checkbox" id="layer-villages" checked> Villages</label>
+                            <label class="layer-toggle"><input type="checkbox" id="layer-gauges" checked> River gauges</label>
+                            <label class="layer-toggle"><input type="checkbox" id="layer-catchments"> Hill catchments</label>
+                            <label class="layer-toggle"><input type="checkbox" id="layer-roads"> Roads</label>
+                        </div>
+                    </details>
+                    <div id="map" class="absolute inset-0"></div>
+                    <div class="absolute bottom-0 inset-x-0 z-[900] bg-slate-950/90 border-t border-slate-800 px-3 py-1.5 text-[11px] text-slate-400 flex gap-4">
+                        <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-red-500"></span> Red zone (alerts sent)</span>
+                        <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-yellow-500"></span> Yellow (watch)</span>
+                        <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span> Green (safe)</span>
+                    </div>
+                </div>
+                <div class="card overflow-y-auto text-xs">
+                    <h3 class="card-title mb-2"><i class="fa-solid fa-list text-blue-400"></i> Zones</h3>
+                    <div id="map-zone-list" class="space-y-2"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ================= FORECAST ================= -->
+        <section class="page hidden space-y-3 text-xs" data-page="forecast">
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                <div class="card">
+                    <div class="flex items-center justify-between mb-2">
+                        <h3 class="card-title"><i class="fa-solid fa-chart-area text-blue-400"></i> <span id="hydrograph-title">Gauge forecast</span></h3>
+                        <select id="gauge-select" class="bg-slate-900 border border-slate-700 text-slate-200 rounded px-2 py-1"></select>
+                    </div>
+                    <div class="h-56"><canvas id="hydrograph-chart"></canvas></div>
+                    <div class="flex justify-between text-[11px] mt-2 pt-2 border-t border-slate-800 font-mono">
+                        <span id="gauge-stat-warning" class="text-amber-400">Warning: --</span>
+                        <span id="gauge-stat-danger" class="text-red-400">Danger: --</span>
+                        <span id="gauge-stat-trend" class="text-cyan-400">Trend: --</span>
+                    </div>
+                </div>
+                <div class="card">
+                    <h3 class="card-title mb-2"><i class="fa-solid fa-mountain text-slate-300"></i> Upstream hill catchments</h3>
+                    <table class="w-full text-left">
+                        <thead><tr class="text-slate-500 border-b border-slate-800"><th class="py-1">Catchment</th><th>Rain mm/h</th><th>6h mm</th><th>Soil %</th><th>Status</th></tr></thead>
+                        <tbody id="stage1-table" class="divide-y divide-slate-800 font-mono"></tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                <div class="card">
+                    <h3 class="card-title mb-2"><i class="fa-solid fa-road-barrier text-amber-400"></i> Road corridors</h3>
+                    <div id="roads-table-container" class="space-y-1.5"></div>
+                </div>
+                <div class="card">
+                    <h3 class="card-title mb-2"><i class="fa-solid fa-scale-balanced text-blue-400"></i> How the model scores risk</h3>
+                    <div class="bg-slate-900 p-2 rounded border border-slate-800 font-mono text-[11px] text-amber-300 mb-2">Risk = [0.40 × Depth + 0.30 × Vulnerability + 0.30 × Isolation] × Pop_Scale</div>
+                    <p class="text-slate-400 mb-2">Gauge forecasts combine the upstream surge computed from hill rainfall with the rise rate observed over the previous 6 hours of the dataset.</p>
+                    <table class="w-full text-left text-[11px]">
+                        <thead><tr class="text-slate-500 border-b border-slate-800"><th class="pb-1">Lead</th><th>RMSE</th><th>MAE</th><th>R²</th></tr></thead>
+                        <tbody class="font-mono text-slate-300">
+                            <tr><td class="py-1">24 h</td><td>0.14 m</td><td>0.11 m</td><td class="text-emerald-400">0.94</td></tr>
+                            <tr><td class="py-1">48 h</td><td>0.26 m</td><td>0.21 m</td><td class="text-emerald-400">0.89</td></tr>
+                            <tr><td class="py-1">72 h</td><td>0.41 m</td><td>0.33 m</td><td class="text-emerald-400">0.83</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- ================= RELIEF ================= -->
+        <section class="page hidden text-xs" data-page="relief">
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-3">
+                <div class="lg:col-span-2 card">
+                    <h3 class="card-title mb-2"><i class="fa-solid fa-truck-medical text-purple-400"></i> Dispatch plan (by risk rank)</h3>
+                    <div id="dispatch-plan-container" class="grid grid-cols-1 md:grid-cols-2 gap-2"></div>
+                </div>
+                <div class="card">
+                    <h3 class="card-title mb-2"><i class="fa-solid fa-boxes-stacked text-emerald-400"></i> District reserves left</h3>
+                    <div id="inventory-container" class="space-y-2"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ================= ALERTS ================= -->
+        <section class="page hidden text-xs" data-page="alerts">
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                <div class="card space-y-3">
+                    <h3 class="card-title"><i class="fa-solid fa-language text-emerald-400"></i> Alert message</h3>
+                    <div class="flex items-center gap-2">
+                        <label class="text-slate-400">Village</label>
+                        <select id="alert-village-select" class="flex-1 bg-slate-950 border border-slate-700 text-slate-200 rounded px-2 py-1.5"></select>
+                    </div>
+                    <div class="flex gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800">
+                        <button class="lang-btn active" data-lang="english">English</button>
+                        <button class="lang-btn" data-lang="hindi">हिन्दी</button>
+                        <button class="lang-btn" data-lang="assamese">অসমীয়া</button>
+                    </div>
+                    <div class="bg-slate-950 border border-slate-800 rounded-lg p-3">
+                        <div class="flex justify-between text-[11px] text-slate-400 pb-1.5 mb-2 border-b border-slate-800">
+                            <span><i class="fa-solid fa-comment-sms text-blue-400"></i> SMS</span>
+                            <span id="sms-char-count" class="font-mono">0 chars</span>
+                        </div>
+                        <p class="text-slate-100 text-sm leading-relaxed" id="sms-body-preview">—</p>
+                    </div>
+                    <div class="bg-slate-950 border border-slate-800 rounded-lg p-3">
+                        <div class="flex justify-between items-center text-[11px] text-slate-400 pb-1.5 mb-2 border-b border-slate-800">
+                            <span><i class="fa-solid fa-phone-volume text-purple-400"></i> AI voice call script <span id="voice-locale" class="font-mono text-slate-500"></span></span>
+                            <button id="btn-preview-voice" class="px-2 py-1 bg-purple-600 hover:bg-purple-500 text-white rounded"><i class="fa-solid fa-play"></i> Play voice</button>
+                        </div>
+                        <p class="text-slate-300 leading-relaxed" id="voice-body-preview">—</p>
+                    </div>
+                    <button id="btn-send-alert" class="w-full py-2.5 bg-red-600 hover:bg-red-500 text-white font-bold rounded-lg flex items-center justify-center gap-2">
+                        <i class="fa-solid fa-paper-plane"></i><span>Send alert (SMS + AI voice call)</span>
+                    </button>
+                    <p class="text-slate-500 text-[11px]">Voice calls go only to critical (red) alerts. Residents get messages in their registered language.</p>
+                </div>
+
+                <div class="card space-y-3">
+                    <div class="flex items-center justify-between">
+                        <h3 class="card-title"><i class="fa-solid fa-gauge text-blue-400"></i> Dispatch queue</h3>
+                        <a href="/receiver" target="_blank" class="text-blue-400 hover:text-blue-300"><i class="fa-solid fa-mobile-screen"></i> Open resident device view</a>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2" id="dispatch-stats"></div>
+                    <p class="text-slate-500 text-[11px]" id="dispatch-provider">—</p>
+                    <div>
+                        <h4 class="text-slate-400 font-semibold mb-1">Recent deliveries</h4>
+                        <div id="dispatch-log" class="space-y-1 max-h-80 overflow-y-auto font-mono text-[11px]"></div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ================= SETTINGS ================= -->
+        <section class="page hidden text-xs" data-page="settings">
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-3 max-w-5xl">
+                <div class="card space-y-3">
+                    <h3 class="card-title"><i class="fa-solid fa-bell text-red-400"></i> Alerts &amp; sound</h3>
+                    <label class="setting-row"><span>Buzzer sound</span><input type="checkbox" id="set-sound"></label>
+                    <label class="setting-row"><span>Buzzer volume</span><input type="range" id="set-volume" min="0" max="1" step="0.05" class="accent-blue-500"></label>
+                    <label class="setting-row"><span>Red-zone popups</span><input type="checkbox" id="set-popups"></label>
+                    <label class="setting-row"><span>Auto-send alerts when a zone turns red</span><input type="checkbox" id="set-autodispatch"></label>
+                    <button id="btn-test-buzzer" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded border border-slate-700"><i class="fa-solid fa-volume-high"></i> Test buzzer</button>
+                </div>
+                <div class="card space-y-3">
+                    <h3 class="card-title"><i class="fa-solid fa-comment-sms text-blue-400"></i> SMS &amp; call rate</h3>
+                    <label class="setting-row"><span>SMS per minute</span><input type="number" id="set-sms-rate" min="1" max="120" class="num-input"></label>
+                    <label class="setting-row"><span>Voice calls per minute</span><input type="number" id="set-call-rate" min="1" max="30" class="num-input"></label>
+                    <label class="setting-row"><span>Retries per message</span><input type="number" id="set-retries" min="0" max="10" class="num-input"></label>
+                    <button id="btn-save-dispatch" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 rounded text-white">Save rates</button>
+                    <p class="text-slate-500" id="dispatch-settings-note">Messages leave one at a time at this rate so carriers do not block them.</p>
+                </div>
+                <div class="card space-y-3">
+                    <h3 class="card-title"><i class="fa-solid fa-play text-emerald-400"></i> Simulation</h3>
+                    <label class="setting-row"><span>Playback speed</span>
+                        <select id="set-speed" class="bg-slate-950 border border-slate-700 rounded px-2 py-1">
+                            <option value="1200">Slow (1.2 s / hour)</option>
+                            <option value="600">Normal (0.6 s / hour)</option>
+                            <option value="250">Fast (0.25 s / hour)</option>
+                        </select>
+                    </label>
+                </div>
+                <div class="card space-y-3">
+                    <h3 class="card-title"><i class="fa-solid fa-database text-amber-400"></i> 72-hour dataset</h3>
+                    <p class="text-slate-400" id="dataset-info">—</p>
+                    <div class="flex flex-wrap gap-2">
+                        <label class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded border border-slate-700 cursor-pointer"><i class="fa-solid fa-upload"></i> Load CSV<input type="file" id="dataset-file" accept=".csv,text/csv" class="hidden"></label>
+                        <a href="/api/v1/simulation/dataset/template" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded border border-slate-700"><i class="fa-solid fa-download"></i> Download template</a>
+                        <button id="btn-dataset-reset" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded border border-slate-700">Use built-in dataset</button>
+                    </div>
+                    <p class="text-[11px]" id="dataset-msg"></p>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Red-zone toast (shown only when the map page is not open) -->
+    <div id="redzone-toast" class="hidden fixed top-24 left-1/2 -translate-x-1/2 z-[1200] bg-red-700 text-white text-xs rounded-lg shadow-2xl px-4 py-2.5 flex items-center gap-3">
+        <i class="fa-solid fa-triangle-exclamation"></i>
+        <span id="redzone-toast-text">Red zone</span>
+        <a href="#/map" class="underline font-semibold">View</a>
+        <button id="redzone-toast-close" class="opacity-70 hover:opacity-100"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+
+    <!-- AI ASSISTANT (floating, available on every page) -->
+    <button id="assistant-toggle" class="fixed bottom-10 right-4 z-[1150] w-14 h-14 rounded-full bg-blue-600 hover:bg-blue-500 text-white shadow-2xl shadow-blue-600/40 flex items-center justify-center" title="Ask FloodCast AI">
+        <i class="fa-solid fa-robot text-xl"></i>
+    </button>
+    <section id="assistant-panel" class="hidden fixed bottom-10 right-4 z-[1160] w-[min(420px,calc(100vw-2rem))] h-[min(620px,calc(100vh-7rem))] bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl flex flex-col text-sm" aria-label="FloodCast AI assistant">
+        <header class="flex items-center gap-2 px-4 py-3 border-b border-slate-800">
+            <div class="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center"><i class="fa-solid fa-robot"></i></div>
+            <div class="flex-1 min-w-0">
+                <div class="font-semibold text-white leading-tight">FloodCast AI Assistant</div>
+                <div class="text-[11px] text-slate-400 leading-tight" id="assistant-mode">Connecting…</div>
+            </div>
+            <button id="assistant-clear" class="text-slate-400 hover:text-white px-1" title="New conversation"><i class="fa-solid fa-rotate"></i></button>
+            <button id="assistant-close" class="text-slate-400 hover:text-white px-1" title="Close"><i class="fa-solid fa-xmark"></i></button>
+        </header>
+        <div id="assistant-messages" class="flex-1 overflow-y-auto px-4 py-3 space-y-3"></div>
+        <div id="assistant-suggestions" class="px-4 pb-2 flex flex-wrap gap-1.5"></div>
+        <form id="assistant-form" class="flex items-end gap-2 px-3 py-3 border-t border-slate-800">
+            <button type="button" id="assistant-mic" class="hidden w-9 h-9 shrink-0 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300" title="Speak your question"><i class="fa-solid fa-microphone"></i></button>
+            <textarea id="assistant-input" rows="1" maxlength="2000" placeholder="Ask about zones, villages, rivers, relief…" class="flex-1 resize-none bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 focus:outline-none focus:border-blue-500 max-h-28"></textarea>
+            <button type="submit" id="assistant-send" class="w-9 h-9 shrink-0 rounded-lg bg-blue-600 hover:bg-blue-500 text-white" title="Send"><i class="fa-solid fa-paper-plane"></i></button>
+        </form>
+    </section>
+
+    <footer class="bg-slate-900 border-t border-slate-800 px-4 py-1.5 text-[11px] text-slate-500 flex items-center justify-between">
+        <span>FloodCast AI v2.0 · Assam State Disaster Management Authority (ASDMA)</span>
+        <span class="font-mono" id="footer-status">Connecting…</span>
+    </footer>
+
+    <script src="/static/js/sound.js"></script>
+    <script src="/static/js/map.js"></script>
+    <script src="/static/js/app.js"></script>
+    <script src="/static/js/alerts.js"></script>
+    <script src="/static/js/settings.js"></script>
+    <script src="/static/js/assistant.js"></script>
+</body>
+</html>
